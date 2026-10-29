@@ -1,0 +1,1083 @@
+{
+  "info": {
+    "_postman_id": "3a47d144-b175-54a1-8bb6-01fb472015ce",
+    "name": "Message Vault",
+    "description": "Run top to bottom in the Collection Runner. Set Settings → General → Working directory to the repository's postman/ folder so samples/* files resolve.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.request.headers.upsert({ key: \"Accept\", value: \"application/json\" });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Overview",
+      "item": [
+        {
+          "name": "Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/stats"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Has counters\", () => {",
+                  "    pm.expect(json.messages).to.have.all.keys(\"sealed\", \"available\", \"destroyed\");",
+                  "    pm.expect(json.files).to.have.all.keys(\"count\", \"total_size_bytes\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Paginated list\", () => {",
+                  "    pm.expect(json.data).to.be.an(\"array\");",
+                  "    pm.expect(json.meta).to.have.property(\"total\");",
+                  "});",
+                  "pm.test(\"Never exposes body or files\", () => {",
+                  "    json.data.forEach(m => {",
+                  "        pm.expect(m).to.not.have.property(\"body\");",
+                  "        pm.expect(m.attachments).to.have.all.keys(\"count\", \"types\");",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List sealed only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages?status=sealed"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test(\"Every item is sealed\", () => {",
+                  "    pm.response.json().data.forEach(m => {",
+                  "        pm.expect(m.status).to.eql(\"sealed\");",
+                  "        pm.expect(m.seconds_until_unlock).to.be.above(0);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List with unknown status → 422",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages?status=lost"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 422\", () => pm.response.to.have.status(422));",
+                  "",
+                  "pm.test(\"Error points to status\", () => pm.expect(pm.response.json().errors).to.have.property(\"status\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Create",
+      "item": [
+        {
+          "name": "Create without max_views → 422",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/messages",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Broken rules",
+                  "type": "text"
+                },
+                {
+                  "key": "body",
+                  "value": "x",
+                  "type": "text"
+                },
+                {
+                  "key": "destroy_mode",
+                  "value": "after_views",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 422\", () => pm.response.to.have.status(422));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Readable message\", () => pm.expect(json.message).to.be.a(\"string\"));",
+                  "pm.test(\"max_views error\", () => pm.expect(json.errors).to.have.property(\"max_views\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create with destroy_at before unlock_at → 422",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/messages",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Broken dates",
+                  "type": "text"
+                },
+                {
+                  "key": "body",
+                  "value": "x",
+                  "type": "text"
+                },
+                {
+                  "key": "destroy_mode",
+                  "value": "at_date",
+                  "type": "text"
+                },
+                {
+                  "key": "unlock_at",
+                  "value": "{{in_two_hours}}",
+                  "type": "text"
+                },
+                {
+                  "key": "destroy_at",
+                  "value": "{{in_one_hour}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"in_one_hour\", new Date(Date.now() + 3600 * 1000).toISOString());",
+                  "pm.collectionVariables.set(\"in_two_hours\", new Date(Date.now() + 7200 * 1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 422\", () => pm.response.to.have.status(422));",
+                  "",
+                  "pm.test(\"destroy_at error\", () => pm.expect(pm.response.json().errors).to.have.property(\"destroy_at\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create without body and files → 422",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/messages",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Empty",
+                  "type": "text"
+                },
+                {
+                  "key": "destroy_mode",
+                  "value": "never",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 422\", () => pm.response.to.have.status(422));",
+                  "",
+                  "pm.test(\"body error\", () => pm.expect(pm.response.json().errors).to.have.property(\"body\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create burn-after-reading with files",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/messages",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Burn after reading",
+                  "type": "text"
+                },
+                {
+                  "key": "teaser",
+                  "value": "Only for you",
+                  "type": "text"
+                },
+                {
+                  "key": "body",
+                  "value": "The treasure is under the old oak.",
+                  "type": "text"
+                },
+                {
+                  "key": "destroy_mode",
+                  "value": "on_read",
+                  "type": "text"
+                },
+                {
+                  "key": "attachments[]",
+                  "type": "file",
+                  "src": "samples/image.png"
+                },
+                {
+                  "key": "attachments[]",
+                  "type": "file",
+                  "src": "samples/document.pdf"
+                },
+                {
+                  "key": "attachments[]",
+                  "type": "file",
+                  "src": "samples/video.mp4"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Returns owner token once\", () => pm.expect(json.owner_token).to.be.a(\"string\").with.lengthOf(40));",
+                  "pm.test(\"Rules saved\", () => {",
+                  "    pm.expect(json.status).to.eql(\"available\");",
+                  "    pm.expect(json.destroy_mode).to.eql(\"on_read\");",
+                  "    pm.expect(json.remaining_views).to.eql(1);",
+                  "});",
+                  "pm.test(\"Three attachments stored\", () => pm.expect(json.attachments).to.have.lengthOf(3));",
+                  "pm.collectionVariables.set(\"message_id\", json.id);",
+                  "pm.collectionVariables.set(\"owner_token\", json.owner_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create sealed time capsule",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/messages",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Time capsule",
+                  "type": "text"
+                },
+                {
+                  "key": "teaser",
+                  "value": "Open in one hour",
+                  "type": "text"
+                },
+                {
+                  "key": "body",
+                  "value": "Hello from the past!",
+                  "type": "text"
+                },
+                {
+                  "key": "unlock_at",
+                  "value": "{{in_one_hour}}",
+                  "type": "text"
+                },
+                {
+                  "key": "destroy_mode",
+                  "value": "never",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"in_one_hour\", new Date(Date.now() + 3600 * 1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Status is sealed\", () => pm.expect(json.status).to.eql(\"sealed\"));",
+                  "pm.collectionVariables.set(\"sealed_id\", json.id);",
+                  "pm.collectionVariables.set(\"sealed_owner_token\", json.owner_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create password-protected (2 views)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/api/messages",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Secret recipe",
+                  "type": "text"
+                },
+                {
+                  "key": "teaser",
+                  "value": "Password hint: the classic one",
+                  "type": "text"
+                },
+                {
+                  "key": "body",
+                  "value": "Two eggs, a cup of flour and a pinch of Docker.",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "letmein",
+                  "type": "text"
+                },
+                {
+                  "key": "destroy_mode",
+                  "value": "after_views",
+                  "type": "text"
+                },
+                {
+                  "key": "max_views",
+                  "value": "2",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Password flag and view limit\", () => {",
+                  "    pm.expect(json.has_password).to.eql(true);",
+                  "    pm.expect(json.remaining_views).to.eql(2);",
+                  "});",
+                  "pm.collectionVariables.set(\"protected_id\", json.id);",
+                  "pm.collectionVariables.set(\"protected_owner_token\", json.owner_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Owner: preview & update",
+      "item": [
+        {
+          "name": "Preview without owner token → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages/{{message_id}}/preview"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));",
+                  "",
+                  "pm.test(\"Readable message\", () => pm.expect(pm.response.json().message).to.include(\"X-Owner-Token\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preview with wrong owner token → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "not-the-token"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{message_id}}/preview"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preview as owner (no view spent)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "{{owner_token}}"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{message_id}}/preview"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Body visible\", () => pm.expect(json.body).to.be.a(\"string\"));",
+                  "pm.test(\"No view spent\", () => pm.expect(json.views_count).to.eql(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preview sealed message as owner",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "{{sealed_owner_token}}"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{sealed_id}}/preview"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test(\"Owner sees content despite unlock_at\", () => pm.expect(pm.response.json().body).to.eql(\"Hello from the past!\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update title (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "{{owner_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{message_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Burn after reading (edited)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test(\"Title changed\", () => pm.expect(pm.response.json().title).to.eql(\"Burn after reading (edited)\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update with broken rules → 422",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "{{owner_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{message_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destroy_mode\": \"after_views\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 422\", () => pm.response.to.have.status(422));",
+                  "",
+                  "pm.test(\"max_views error\", () => pm.expect(pm.response.json().errors).to.have.property(\"max_views\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Read",
+      "item": [
+        {
+          "name": "Read sealed → 423",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages/{{sealed_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 423\", () => pm.response.to.have.status(423));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Unlock info\", () => {",
+                  "    pm.expect(json.unlock_at).to.be.a(\"string\");",
+                  "    pm.expect(json.seconds_remaining).to.be.above(0);",
+                  "});",
+                  "pm.test(\"No content\", () => pm.expect(json).to.not.have.property(\"body\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read protected without password → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages/{{protected_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));",
+                  "",
+                  "pm.test(\"Readable message\", () => pm.expect(pm.response.json().message).to.include(\"password\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read protected with wrong password → 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Message-Password",
+                "value": "wrong"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{protected_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read protected with password",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Message-Password",
+                "value": "letmein"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{protected_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Content returned\", () => pm.expect(json.body).to.include(\"Docker\"));",
+                  "pm.test(\"One view spent\", () => {",
+                  "    pm.expect(json.views_count).to.eql(1);",
+                  "    pm.expect(json.remaining_views).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update after first read → 409",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "{{protected_owner_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{protected_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Too late\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 409\", () => pm.response.to.have.status(409));",
+                  "",
+                  "pm.test(\"Readable message\", () => pm.expect(pm.response.json().message).to.include(\"already been read\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read burn-after-reading (last view)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages/{{message_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Last reader still gets the content\", () => pm.expect(json.body).to.include(\"oak\"));",
+                  "pm.test(\"Message is now destroyed\", () => {",
+                  "    pm.expect(json.status).to.eql(\"destroyed\");",
+                  "    pm.expect(json.remaining_views).to.eql(0);",
+                  "    pm.expect(json.destroyed_reason).to.eql(\"read_once\");",
+                  "});",
+                  "pm.test(\"Signed download links\", () => {",
+                  "    pm.expect(json.attachments).to.have.lengthOf(3);",
+                  "    json.attachments.forEach(a => pm.expect(a.download_url).to.include(\"signature=\"));",
+                  "});",
+                  "const png = json.attachments.find(a => a.mime_type === \"image/png\");",
+                  "pm.collectionVariables.set(\"download_url\", png.download_url);",
+                  "pm.collectionVariables.set(\"tampered_download_url\", png.download_url + \"tampered\");"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download attachment (signed URL)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{download_url}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test(\"Streams the PNG\", () => {",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"image/png\");",
+                  "    pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.include(\"image.png\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download with tampered signature → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{tampered_download_url}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));",
+                  "",
+                  "pm.test(\"Readable message\", () => pm.expect(pm.response.json().message).to.include(\"invalid or has expired\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read destroyed → 410",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages/{{message_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 410\", () => pm.response.to.have.status(410));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Tombstone without content\", () => {",
+                  "    pm.expect(json.tombstone).to.include.all.keys(\"title\", \"created_at\", \"first_viewed_at\", \"destroyed_at\", \"destroyed_reason\");",
+                  "    pm.expect(json.tombstone.destroyed_reason).to.eql(\"read_once\");",
+                  "    pm.expect(json).to.not.have.property(\"body\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Preview destroyed as owner",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "{{owner_token}}"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{message_id}}/preview"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Body wiped from database\", () => {",
+                  "    pm.expect(json.status).to.eql(\"destroyed\");",
+                  "    pm.expect(json.body).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Delete & errors",
+      "item": [
+        {
+          "name": "Delete without owner token → 403",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/api/messages/{{sealed_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete as owner",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Owner-Token",
+                "value": "{{sealed_owner_token}}"
+              }
+            ],
+            "url": "{{base_url}}/api/messages/{{sealed_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read deleted → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages/{{sealed_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));",
+                  "",
+                  "pm.test(\"Readable message\", () => pm.expect(pm.response.json().message).to.eql(\"Resource not found.\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read malformed id → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/messages/not-a-uuid"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stats after the run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/stats"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test(\"Has destroyed messages\", () => pm.expect(pm.response.json().messages.destroyed).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "message_id",
+      "value": ""
+    },
+    {
+      "key": "owner_token",
+      "value": ""
+    },
+    {
+      "key": "sealed_id",
+      "value": ""
+    },
+    {
+      "key": "sealed_owner_token",
+      "value": ""
+    },
+    {
+      "key": "protected_id",
+      "value": ""
+    },
+    {
+      "key": "protected_owner_token",
+      "value": ""
+    },
+    {
+      "key": "download_url",
+      "value": ""
+    },
+    {
+      "key": "tampered_download_url",
+      "value": ""
+    },
+    {
+      "key": "in_one_hour",
+      "value": ""
+    },
+    {
+      "key": "in_two_hours",
+      "value": ""
+    }
+  ]
+}

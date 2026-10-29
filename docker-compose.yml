@@ -1,0 +1,99 @@
+name: message-vault
+
+x-app-environment: &app-environment
+  APP_NAME: ${APP_NAME}
+  APP_ENV: ${APP_ENV}
+  APP_KEY: ${APP_KEY}
+  APP_DEBUG: ${APP_DEBUG}
+  APP_URL: ${APP_URL}
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: ${LOG_LEVEL}
+
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_DATABASE: ${DB_DATABASE}
+  DB_USERNAME: ${DB_USERNAME}
+  DB_PASSWORD: ${DB_PASSWORD}
+
+  SESSION_DRIVER: array
+  CACHE_STORE: database
+  QUEUE_CONNECTION: sync
+
+  VAULT_MAX_FILES: ${VAULT_MAX_FILES}
+  VAULT_MAX_FILE_SIZE_MB: ${VAULT_MAX_FILE_SIZE_MB}
+  VAULT_ALLOWED_MIME_TYPES: ${VAULT_ALLOWED_MIME_TYPES}
+  VAULT_DOWNLOAD_LINK_TTL_MINUTES: ${VAULT_DOWNLOAD_LINK_TTL_MINUTES}
+  VAULT_PER_PAGE: ${VAULT_PER_PAGE}
+
+  PHP_UPLOAD_MAX_FILESIZE: ${VAULT_MAX_FILE_SIZE_MB}M
+  PHP_POST_MAX_SIZE: ${PHP_POST_MAX_SIZE}
+
+services:
+  app:
+    build: .
+    image: message-vault:local
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - attachments:/app/storage/app/attachments
+    ports:
+      - "${APP_PORT}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/up"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - vault
+
+  scheduler:
+    image: message-vault:local
+    command: ["php", "artisan", "schedule:work"]
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "false"
+    volumes:
+      - attachments:/app/storage/app/attachments
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "artisan", "schedule:list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - vault
+
+  postgres:
+    image: postgres:17.11-alpine3.23
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - vault
+
+networks:
+  vault:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  attachments:
